@@ -1,8 +1,11 @@
 
-const http	= require("http");
-const https = require("https");
-const url   = require('url');
-const fs	= require("fs");
+const notifDb = require("./mdb");
+
+const http	 = require("http");
+const https  = require("https");
+const url    = require('url');
+const fs	 = require("fs");
+const crypto = require("crypto");
 
 const NODE_HOST			= "127.0.0.1"; // localhost
 const NODE_PORT			= 1010;
@@ -12,7 +15,6 @@ const options_secure = {
 	key: fs.readFileSync('/usr/syno/etc/certificate/_archive/WBwJuG/privkey.pem'),
 	cert: fs.readFileSync('/usr/syno/etc/certificate/_archive/WBwJuG/cert.pem')
 };
-
 
 
 // https.createServer(onRequest).listen(NODE_PORT/*, NODE_HOST*/);
@@ -42,6 +44,14 @@ const state = {
 	topics: {}
 };
 
+const privateKey = `-----BEGIN RSA PRIVATE KEY-----
+SAME AS BINDING SERVER
+-----END RSA PRIVATE KEY-----`;
+
+const publicKey = `-----BEGIN PUBLIC KEY-----
+SAME AS BINDING SERVER
+-----END PUBLIC KEY-----`;
+
 
 
 
@@ -53,7 +63,7 @@ function onRequest(request, response) {
 	
 	switch(url_parts.pathname) {
 		
-		case "/":
+		case "/": // Endpoint to subscribe (listen) to topics
 
 			if (request.method == 'OPTIONS') {
 				response.writeHead(200, {
@@ -63,6 +73,7 @@ function onRequest(request, response) {
 						'Allow': 'GET, POST, OPTIONS, PUT, DELETE'
 					});
 				response.end();
+				return;
 			}
 
 			if (request.method == 'POST' /*&& request.headers['content-type'] == 'application/json'*/) {
@@ -74,11 +85,13 @@ function onRequest(request, response) {
 				request.on('data', (chunk) => {
 					// console.log(chunk);
 					// body += chunk.toString(); // convert Buffer to string
-					body += chunk; // convert Buffer to string
+					body += chunk;
 					if (body.length > 1e6) request.connection.destroy(); // if > 1MB of body, kill the connection
 				});
 
 				request.on('end', () => {
+
+					let jBody = null;
 
 					// const jBody = JSON.parse(body);
 					try {
@@ -90,30 +103,84 @@ function onRequest(request, response) {
 					}
 
 					if ( jBody.ep == undefined || !Array.isArray(jBody.ep) ) {
-						response.writeHead(400, 'Event Points should be an array', { 'Access-Control-Allow-Origin' : '*' });
+						response.writeHead(444, 'Event Points should be an array', { 'Access-Control-Allow-Origin' : '*' });
 						response.end();
 						return;
 					}
 
-					jBody.ep.forEach( (ePoint, index, node) => {
 
-						if (typeof ePoint !== 'string') {
-							response.writeHead(400, 'Event Point should be a string', { 'Access-Control-Allow-Origin' : '*' });
-							response.end();
-							return;
+
+
+					jBody.binded = false;
+					if ( jBody.bind_key !== undefined ) {
+						// This means that all the Event Points should be binded to the USER_ID doing the request.
+						// This is acomplished prepending "bind:USER_ID" to the topic requested
+
+						// The USER_ID comes from asking it to the server, when sending the encrypted data in jBody.bind_key
+						// If they requested a binding but there was not user registered in the session, the user will be "[][][]"
+						getUserIdFromServer(jBody.bind_key, (uid) => {
+
+							jBody.binded = true;
+
+							delete jBody.bind_key;
+
+							if (uid == "" || uid == "__DONT__") {
+								response.writeHead(400, `Don't even try`, { 'Access-Control-Allow-Origin' : '*' });
+								response.end();
+								return;
+							}
+
+							if (uid == "server_error") {
+								response.writeHead(500, `Error connecting to binding server.`, { 'Access-Control-Allow-Origin' : '*' });
+								response.end();
+								return;
+							}
+
+							for (let i = 0, jbepl = jBody.ep.length; i < jbepl; i++) {
+								const ePoint = jBody.ep[i];
+
+								if (typeof ePoint !== 'string') {
+									response.writeHead(400, 'Event Point should be a string', { 'Access-Control-Allow-Origin' : '*' });
+									response.end();
+									return;
+								}
+
+								/*****************************************************/
+								/***** EVALUATE ACCESS/PERMISSION TO EVENT POINT *****/
+								/*****************************************************/
+
+								jBody.ep[i] = `bind:${uid}/${ePoint}`;
+
+								if (i == jBody.ep.length - 1) {
+									handleSubscription( trackConnection(url_parts, jBody, request, response) );
+								}
+							}
+
+						});
+						
+					} else {
+
+						for (let i = 0, jbepl = jBody.ep.length; i < jbepl; i++) {
+							const ePoint = jBody.ep[i];
+
+							if (typeof ePoint !== 'string') {
+								response.writeHead(400, 'Event Point should be a string', { 'Access-Control-Allow-Origin' : '*' });
+								response.end();
+								return;
+							}
+
+							/*****************************************************/
+							/***** EVALUATE ACCESS/PERMISSION TO EVENT POINT *****/
+							/*****************************************************/
+
+							if (i == jBody.ep.length - 1) {
+								handleSubscription( trackConnection(url_parts, jBody, request, response) );
+							}
 						}
+						
+						// handleSubscription( trackConnection(url_parts, jBody, request, response) );
 
-						/*****************************************************/
-						/***** EVALUATE ACCESS/PERMISSION TO EVENT POINT *****/
-						/*****************************************************/
-
-						if (index == node.length - 1) {
-							handleSubscription( trackConnection(url_parts, jBody, request, response) );
-						}
-
-					});
-					
-					// handleSubscription( trackConnection(url_parts, jBody, request, response) );
+					}
 
 				});
 
@@ -141,11 +208,13 @@ function onRequest(request, response) {
 						'Allow': 'GET, POST, OPTIONS, PUT, DELETE'
 					});
 				response.end();
+				return;
 			}
 
 			if (request.method == 'POST' /*&& request.headers['content-type'] == 'application/json'*/) {
 					// response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
 					// response.end();
+					// return;
 
 				let body = '';
 
@@ -179,27 +248,165 @@ function onRequest(request, response) {
 						return;
 					}
 
-					try {
-
-						emitEvent(
-							{
-								ep: jBody.ep,
-								e: {
-									type: jBody.e.type,
-									info: jBody.e.info === undefined ? undefined : jBody.e.info
-								}
+					const safeEvent = {
+							ep: jBody.ep,
+							e: {
+								type: jBody.e.type,
+								info: jBody.e.info === undefined ? undefined : jBody.e.info
 							}
-						);
+						};
+					if ('bind_key' in jBody) {
 
-					} catch(err) {
-						response.writeHead(400, err, { 'Access-Control-Allow-Origin' : '*' });
-						response.end();
+						const base64ToDecrypt = jBody.bind_key;
+						let decryptedBindKey;
+
+						try {
+
+							const bufferToDecrypt = new Buffer.from(base64ToDecrypt, 'base64');
+							const decrypted = crypto.privateDecrypt(
+
+								{
+									key: privateKey,
+									padding: crypto.constants.RSA_PKCS1_PADDING
+								},
+
+								bufferToDecrypt
+							);
+
+							decryptedBindKey = JSON.parse( decrypted.toString() );
+
+						} catch(err) {
+
+							console.log("Whoops! Something went wrong while decrypting.");
+							console.log("ERROR:", err);
+							response.writeHead(400, 'Error in Bind Key', { 'Access-Control-Allow-Origin' : '*' });
+							response.end();
+							return;
+
+						}
+
+						if (
+							   decryptedBindKey.iat == undefined
+							|| decryptedBindKey.uid == undefined
+							|| !((new Date(decryptedBindKey.iat)).getTime() > 0) // Not valid timestamp
+							) {
+							console.log("Invalid Bind Key");
+							response.writeHead(400, 'Invalid Bind Key', { 'Access-Control-Allow-Origin' : '*' });
+							response.end();
+							return;
+						}
+
+
+
+						const iatMs = decryptedBindKey.iat * 1000;
+						const nowMs = Date.now();
+						const toleranceMs = 3000; // 3 secondS
+
+						if ( (iatMs > nowMs) || (iatMs < (nowMs - toleranceMs)) ) {
+							console.log("Bind Key expired");
+							response.writeHead(400, 'Invalid Bind Key', { 'Access-Control-Allow-Origin' : '*' });
+							response.end();
+							return;
+						}
+
+						
+						/* GET USER_IDs THAT CAN LISTEN EACH EVENT POINT */
+						/* ¿¿¿ DELETE USERS THAT ARE NOT LISTENING ??? */
+						/* FORMAT NEW EVENT WITH USER_IDs IN TOPIC */ // bind:user_id/event_point
+						/* EMIT EVENT */
+
+						safeEvent.ep = [];
+
+						const epQuery = "SELECT `pub`, `sub`, `pub_password` FROM `registered_endpoints` WHERE `endpoint` = " + "'" + jBody.ep.join("' OR `endpoint` = '") + "'";
+
+						// Connect to DB
+						notifDb.connectDb()
+							.then( (conn) => conn.query(epQuery) )
+							.then( (rows) => {
+
+
+								for (let rowIndex = 0, rl = rows.length; rowIndex < rl; rowIndex++) {
+									const row = rows[rowIndex];
+
+									const allowPub = JSON.parse(row[0]);
+									const allowSub = JSON.parse(row[1]);
+									const pub_password = JSON.parse(row[2]);
+
+									/** EVALUATE PASSWORD **/
+
+									if ( allowPub.includes(decryptedBindKey.uid) ) { // Evaluate credentials to publish event
+
+										for (let shIndex = 0, asl = allowSub.length; shIndex < asl; shIndex++) {
+											const shId = allowSub[shIndex];
+
+											switch (shId) {
+												case "+":
+													safeEvent.ep.push( `+/${jBody.ep[rowIndex]}` );
+													break;
+
+												case "*":
+													safeEvent.ep.push(   `${jBody.ep[rowIndex]}` );
+													safeEvent.ep.push( `+/${jBody.ep[rowIndex]}` );
+													break;
+
+												default:
+													safeEvent.ep.push( `bind:${shId}/${jBody.ep[rowIndex]}` );
+													break;
+											}
+										}
+
+										try {
+
+											emitEvent(safeEvent);
+
+										} catch(err) {
+											response.writeHead(400, err, { 'Access-Control-Allow-Origin' : '*' });
+											response.end();
+											return;
+										}
+										// finally {
+											
+										// }
+
+									} else {
+										console.log(`${decryptedBindKey.uid} can't publish to ${jBody.ep[rowIndex]}`);
+									}
+								}
+
+								response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
+								response.end();
+								return;
+
+								
+							} )
+							.catch(err => {
+								console.log("not connected due to error: " + err);
+
+								response.writeHead(400, err, { 'Access-Control-Allow-Origin' : '*' });
+								response.end();
+								return;
+							});
+
+
+					} else {
+
+						try {
+
+							emitEvent(safeEvent);
+
+						} catch(err) {
+							response.writeHead(400, err, { 'Access-Control-Allow-Origin' : '*' });
+							response.end();
+							return;
+						}
+						// finally {
+							response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
+							response.end();
+							return;
+						// }
+
 					}
-				
-					response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
-					// console.log( Object.keys(state.connections) );
-					// console.log( state.topics );
-					response.end();
+					
 
 				});
 
@@ -236,6 +443,7 @@ function onRequest(request, response) {
 				// console.log( state.topics );
 				response.write(clidConnected.toString());
 				response.end();
+				return;
 
 			}
 
@@ -250,6 +458,7 @@ function onRequest(request, response) {
 		default:
 			response.writeHead(404, { 'Access-Control-Allow-Origin' : '*' });
 			response.end();
+			return;
 			break;
 	}
 
@@ -358,7 +567,8 @@ function handleSubscription(connection) {
 				
 				connection.response.end();
 				if ( 'ep' in connection.body) {
-					connection.body.ep.forEach( (ePoint, index, node) => {
+					for (let index = 0, cbepl = connection.body.ep.length; index < cbepl; index++) {
+						const ePoint = connection.body.ep[index];
 
 						if ( ePoint in state.topics ) {
 
@@ -370,7 +580,7 @@ function handleSubscription(connection) {
 								delete state.topics[ePoint];
 							}
 						}
-					});
+					}
 				} else {
 					if ( connection._id in state.connections ) {
 						delete state.connections[connection._id];
@@ -397,12 +607,12 @@ function handleSubscription(connection) {
 
 	/* HANDLE REQUEST BODY */
 
-	connection.body.ep.forEach( (ePoint, index, node) => {
+	for (let index = 0, cbepl = connection.body.ep.length; index < cbepl; index++) {
+		const ePoint = connection.body.ep[index];
 
 		(ePoint in state.topics) || (state.topics[ePoint] = {} )
 		state.topics[ePoint][connection._id] = connection;
-
-	});
+	}
 
 
 	delete state.connections[connection._id];
@@ -513,14 +723,17 @@ function emitEvent(evObj) {
 
 	// EMIT EVENT TO EACH SUBSCRIBER //
 
-	subscribers.forEach( (subscriber) => {
+	for (var sIx = 0, subl = subscribers.length; sIx < subl; sIx++) {
+		const subscriber = subscribers[sIx];
+
+		console.log(`Topics matched!`, `Requested: "${subscriber.topicRequested}"`, `Emitted: "${subscriber.topicEmitted}"`)
 
 		const jData = JSON.stringify({
 			iat: Date.now(),
 			payload: {
 				ep: {
-					requested: subscriber.topicRequested,
-					emitted: subscriber.topicEmitted
+					requested: subscriber.connection.body.binded ? removeBindId(subscriber.topicRequested) : subscriber.topicRequested,
+					emitted:   subscriber.connection.body.binded ? removeBindId(subscriber.topicEmitted)   : subscriber.topicEmitted
 				},
 				e: {
 					type: evObj.e.type,
@@ -532,15 +745,14 @@ function emitEvent(evObj) {
 
 		const outData = `${separator}${jData.length}${separator}${jData}`; // FORMAT RESPONSE
 
+		console.log( `DEBUGGING. SENDING EVENT TO SUBSCRIBER: [${subscriber.connection._id}](${subscriber.connection.body.clid})` );
 		subscriber.connection.response.write( outData ); // SEND DATA TO SUBSCRIBER
 		resetTick(subscriber.connection);
 
 		console.log( `[${subscriber.connection._id}](${subscriber.connection.body.clid}): ${outData}` );
+	}
 
-		return true;
-
-	} );
-
+	return true;
 
 
 }
@@ -558,7 +770,8 @@ function getSubscribers(arrayTopics) { // MQTT-topics Style
 
 	const subscribers = [];
 
-	arrayTopics.forEach( (ePoint, indx, nde) => {
+	for (let indx = 0, atl = arrayTopics.length; indx < atl; indx++) {
+		const ePoint = arrayTopics[indx];
 
 		if (typeof ePoint !== 'string') {
 			throw 'End Point should be a string';
@@ -610,9 +823,85 @@ function getSubscribers(arrayTopics) { // MQTT-topics Style
 				}
 			}
 		}
-
-	} );
+	}
 
 	return subscribers;
+
+}
+
+
+
+
+
+function getUserIdFromServer(base64String, callback) {
+
+	let body = '';
+
+	const postData = /*JSON.stringify(*/base64String/*)*/;
+
+	const options = {
+		hostname: 'estudiosustenta.myds.me',
+		port: 443,
+		path: '/test/session/getUserId',
+		method: 'RETREIVE',
+		headers: {
+			'Content-Type': 'application/json',
+			'Content-Length': Buffer.byteLength(postData)
+		}
+	};
+
+	const req = https.request(options, (res) => {
+		// console.log(`STATUS: ${res.statusCode}`);
+		// console.log(`HEADERS: ${JSON.stringify(res.headers)}`);
+		res.setEncoding('utf8');
+		res.on('data', (chunk) => {
+			// console.log(`BODY: ${chunk}`);
+			body += chunk;
+			if (body.length > 1e6) request.connection.destroy(); // if > 1MB of body, kill the connection
+		});
+		res.on('end', () => {
+			// console.log('No more data in response.');
+			let userId;
+
+			try {
+				userId = JSON.parse(body.toString());
+			} catch(err) {
+				console.log(`Invalid JSON in body from binding server.`);
+				// console.log('Binding server response:');
+				// console.log(body.toString());
+				callback("server_error");
+				return;
+			} finally {
+
+				callback(userId);
+				return;
+				
+			}
+			
+		});
+	});
+
+	req.on('error', (e) => {
+		console.log(`problem with request: ${e.message}`);
+		callback("server_error");
+		return;
+	});
+
+	// Write data to request body
+	req.write(postData);
+	req.end();
+	return;
+
+}
+
+
+
+
+
+function removeBindId(topicString) {
+
+	const arr1 = topicString.split('/');
+	arr1.shift();
+	return arr1.join('/');
 
 }
