@@ -71,6 +71,7 @@ function onRequest(request, response) {
 				let body = '';
 
 				request.on('data', (chunk) => {
+					// console.log(chunk);
 					// body += chunk.toString(); // convert Buffer to string
 					body += chunk; // convert Buffer to string
 					if (body.length > 1e6) request.connection.destroy(); // if > 1MB of body, kill the connection
@@ -195,27 +196,67 @@ function onRequest(request, response) {
 							return;
 						}
 
-						if ( ePoint in state.subscriptions ) {
-							for (const [connId, conn] of Object.entries(state.subscriptions[ePoint])) {
+						const arr1 = ePoint.split('/');
 
-								const jData = JSON.stringify({
-									iat: Date.now(),
-									payload: {
-										ep: ePoint,
-										e: {
-											type: jBody.e.type,
-											info: jBody.e.info === undefined ? undefined : jBody.e.info
+						for (const [subsId, subs] of Object.entries(state.subscriptions)) {
+
+							const arr2 = subsId.split('/');
+
+							let matched = true;
+							const times = arr1.length > arr2.length ? arr1.length : arr2.length;
+							for (let i = 0; i < times; i++) {
+
+								if (arr1[i] == undefined || arr2[i] == undefined) {
+									matched = false;
+									break;
+								}
+
+								if (
+									   (arr1[i] == "#" && i == arr1.length - 1)
+									|| (arr2[i] == "#" && i == arr2.length - 1)
+									) {
+									break;
+								}
+
+								if (
+									   (arr1[i] == "+" && i != arr1.length - 1)
+									|| (arr2[i] == "+" && i != arr2.length - 1)
+									) {
+									continue;
+								}
+
+								if (arr1[i] != arr2[i]) {
+									matched = false;
+									break;
+								}
+							}
+
+							if (matched) {
+								for (const [connId, conn] of Object.entries(subs)) {
+
+									const jData = JSON.stringify({
+										iat: Date.now(),
+										payload: {
+											ep: {
+												requested: subsId,
+												emitted: ePoint
+											},
+											e: {
+												type: jBody.e.type,
+												info: jBody.e.info === undefined ? undefined : jBody.e.info
+											}
 										}
-									}
-								})
-								.replace(/\'/g, '\\u0027'); // UNICODE ESCAPE: '
+									})
+									.replace(/\'/g, '\\u0027'); // UNICODE ESCAPE: '
 
-								const outData = `${separator}${jData.length}${separator}${jData}`;
-								conn.response.write( outData );
-								console.log( `[${conn._id}]: ${outData}` );
-								resetTick(conn);
+									const outData = `${separator}${jData.length}${separator}${jData}`;
+									conn.response.write( outData );
+									console.log( `[${conn._id}]: ${outData}` );
+									resetTick(conn);
+								}
 							}
 						}
+
 					} );
 				
 					response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
