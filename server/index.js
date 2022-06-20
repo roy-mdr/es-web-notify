@@ -2,7 +2,7 @@
 const http	= require("http");
 const https = require("https");
 const url   = require('url');
-const fs    = require("fs");
+const fs	= require("fs");
 
 const NODE_HOST			= "127.0.0.1"; // localhost
 const NODE_PORT			= 1010;
@@ -53,40 +53,190 @@ function onRequest(request, response) {
 	switch(url_parts.pathname) {
 		
 		case "/":
-			handleSubscription( trackConnection(url_parts, request, response) );
-			break;
-		
-		case "/event":
-			if ( 'id' in url_parts.query) {
-				if ( url_parts.query.id in state.subscriptions ) {
-					for (const [connId, conn] of Object.entries(state.subscriptions[url_parts.query.id])) {
 
-						const jData = JSON.stringify({
-							iat: Date.now(),
-							payload: url_parts.query.id + " " + Math.random()
-						})
-						.replace(/\'/g, '\\u0027'); // UNICODE ESCAPE: '
-
-						const outData = `${separator}${jData.length}${separator}${jData}`;
-						conn.response.write( outData );
-						console.log( `[${conn._id}]: ${outData}` );
-						resetTick(conn);
-					}
-				}
+			if (request.method == 'OPTIONS') {
+				response.writeHead(200, {
+						'Access-Control-Allow-Origin': '*',
+						'Access-Control-Allow-Headers': 'Authorization, X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Allow-Request-Method',
+						'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
+						'Allow': 'GET, POST, OPTIONS, PUT, DELETE'
+					});
+				response.end();
 			}
 
+			if (request.method == 'POST' /*&& request.headers['content-type'] == 'application/json'*/) {
+
+				/* HANDLE REQUEST BODY */
+
+				let body = '';
+
+				request.on('data', (chunk) => {
+					// body += chunk.toString(); // convert Buffer to string
+					body += chunk; // convert Buffer to string
+					if (body.length > 1e6) request.connection.destroy(); // if > 1MB of body, kill the connection
+				});
+
+				request.on('end', () => {
+
+					// const jBody = JSON.parse(body);
+					try {
+						jBody = JSON.parse(body.toString());
+					} catch(err) {
+						response.writeHead(400, 'Invalid JSON in body', { 'Access-Control-Allow-Origin' : '*' });
+						response.end();
+						return;
+					}
+
+					if ( jBody.ep == undefined || !Array.isArray(jBody.ep) ) {
+						response.writeHead(400, 'Event Points should be an array', { 'Access-Control-Allow-Origin' : '*' });
+						response.end();
+						return;
+					}
+
+					jBody.ep.forEach( (ePoint, index, node) => {
+
+						if (typeof ePoint !== 'string') {
+							response.writeHead(400, 'Event Point should be a string', { 'Access-Control-Allow-Origin' : '*' });
+							response.end();
+							return;
+						}
+
+						/*****************************************************/
+						/***** EVALUATE ACCESS/PERMISSION TO EVENT POINT *****/
+						/*****************************************************/
+
+						if (index == node.length - 1) {
+							handleSubscription( trackConnection(url_parts, jBody, request, response) );
+						}
+
+					});
+					
+					// handleSubscription( trackConnection(url_parts, jBody, request, response) );
+
+				});
+
+			}
+
+			if (request.method != 'OPTIONS' && request.method != 'POST') {
+				response.writeHead(400, 'Method is not POST', { 'Access-Control-Allow-Origin' : '*' });
+				response.end();
+				return;
+			}
+
+			break;
+		
+		case "/event": // CALL ONLY FROM BACKEND
+
+			/************************************************/
+			/***** EVALUATE AUTHORIZATION TO EMIT EVENT *****/
+			/************************************************/
 			
-			response.statusCode = 200;
-			response.statusMessage = 'OK';
-			// console.log( Object.keys(state.connections) );
-			// console.log( state.subscriptions );
-			response.end();
+			if (request.method == 'OPTIONS') {
+				response.writeHead(200, {
+						'Access-Control-Allow-Origin': '*',
+						'Access-Control-Allow-Headers': 'Authorization, X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Allow-Request-Method',
+						'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
+						'Allow': 'GET, POST, OPTIONS, PUT, DELETE'
+					});
+				response.end();
+			}
+
+			if (request.method == 'POST' /*&& request.headers['content-type'] == 'application/json'*/) {
+					// response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
+					// response.end();
+
+				let body = '';
+
+				request.on('data', (chunk) => {
+					body += chunk.toString(); // convert Buffer to string
+					if (body.length > 1e6) request.connection.destroy(); // if > 1MB of body, kill the connection
+				});
+
+				request.on('end', () => {
+
+					let jBody = null;
+
+					try {
+						jBody = JSON.parse(body);
+					} catch(err) {
+						response.writeHead(400, 'Invalid JSON in body', { 'Access-Control-Allow-Origin' : '*' });
+						response.end();
+						return;
+					}
+
+					if (
+						   jBody    == null
+						|| jBody.ep == undefined
+						|| jBody.e == undefined
+						|| jBody.e.type == undefined
+						|| !Array.isArray(jBody.ep)
+						|| typeof jBody.e.type !== 'string'
+						) {
+						response.writeHead(400, 'Invalid object', { 'Access-Control-Allow-Origin' : '*' });
+						response.end();
+						return;
+					}
+
+					/*if (
+						   jBody.e !== undefined
+						&& jBody.e.info !== undefined
+						&& typeof jBody.e.info !== 'string'
+						) {
+						response.writeHead(400, 'Data should be  string', { 'Access-Control-Allow-Origin' : '*' });
+						response.end();
+						return;
+					}*/
+
+					jBody.ep.forEach( (ePoint, indx, nde) => {
+
+						if (typeof ePoint !== 'string') {
+							response.writeHead(400, 'End Point should be a string', { 'Access-Control-Allow-Origin' : '*' });
+							response.end();
+							return;
+						}
+
+						if ( ePoint in state.subscriptions ) {
+							for (const [connId, conn] of Object.entries(state.subscriptions[ePoint])) {
+
+								const jData = JSON.stringify({
+									iat: Date.now(),
+									payload: {
+										ep: ePoint,
+										e: {
+											type: jBody.e.type,
+											info: jBody.e.info === undefined ? undefined : jBody.e.info
+										}
+									}
+								})
+								.replace(/\'/g, '\\u0027'); // UNICODE ESCAPE: '
+
+								const outData = `${separator}${jData.length}${separator}${jData}`;
+								conn.response.write( outData );
+								console.log( `[${conn._id}]: ${outData}` );
+								resetTick(conn);
+							}
+						}
+					} );
+				
+					response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
+					// console.log( Object.keys(state.connections) );
+					// console.log( state.subscriptions );
+					response.end();
+
+				});
+
+			}
+
+			if (request.method != 'OPTIONS' && request.method != 'POST') {
+				response.writeHead(400, 'Method is not POST', { 'Access-Control-Allow-Origin' : '*' });
+				response.end();
+				return;
+			}
 
 			break;
 
 		default:
-			response.statusCode = 404;
-			response.statusMessage = 'Not found';
+			response.writeHead(404, { 'Access-Control-Allow-Origin' : '*' });
 			response.end();
 			break;
 	}
@@ -97,7 +247,7 @@ function onRequest(request, response) {
 
 
 
-function trackConnection(parsed_url, request, response) {
+function trackConnection(parsed_url, parsed_body = {}, request, response) {
 
 	/* SET CONNECTION IN STATE TO TRACK */
 
@@ -106,11 +256,12 @@ function trackConnection(parsed_url, request, response) {
 	
 	state.connections[connId] = {};
 
-	const connection		= state.connections[connId];
-	connection._id			= connId;
+	const connection	= state.connections[connId];
+	connection._id		= connId;
 	connection.request	= request;
 	connection.response = response;
-	connection.query		= parsed_url.query;
+	connection.query	= parsed_url.query;
+	connection.body		= parsed_body;
 	connection.onClose	= (err) => {
 			console.log(`Connection [${connection._id}] closed default.`);
 			
@@ -145,45 +296,50 @@ function handleSubscription(connection) {
 
 	connection.request.removeListener('close', connection.onClose);
 	connection.onClose	= (err) => {
-			console.log(`Connection [${connection._id}] closed.`);
+			if (connection !== undefined) {
+				console.log(`Connection [${connection._id}] closed.`);
 
-			clearTimeout(connection.timeout);
-			clearTimeout(connection.tick);
-			
-			connection.response.end();
-			if ( 'subto' in connection.query) {
-				connection.subs.forEach( (key, index, node) => {
-					delete state.subscriptions[key][connection._id];
+				clearTimeout(connection.timeout);
+				clearTimeout(connection.tick);
+				
+				connection.response.end();
+				if ( 'ep' in connection.body) {
+					connection.body.ep.forEach( (ePoint, index, node) => {
 
-					if ( Object.keys(state.subscriptions[key]).length == 0) {
-						delete state.subscriptions[key];
+						if ( ePoint in state.subscriptions ) {
+
+							if ( connection._id in state.subscriptions[ePoint] ) {
+								delete state.subscriptions[ePoint][connection._id];
+							}
+
+							if ( Object.keys(state.subscriptions[ePoint]).length == 0) {
+								delete state.subscriptions[ePoint];
+							}
+						}
+					});
+				} else {
+					if ( connection._id in state.connections ) {
+						delete state.connections[connection._id];
 					}
-				});
-			} else {
-				delete state.connections[connection._id];
+				}
+				connection = undefined;
 			}
-			connection = undefined;
 		}
 	connection.request.on('close', connection.onClose);
 
 
 
-	/* HANDLE REQUEST QUERY */
+	/* HANDLE REQUEST BODY */
 
-	if ( 'subto' in connection.query) {
+	connection.body.ep.forEach( (ePoint, index, node) => {
 
-		connection.subs = JSON.parse(connection.query.subto);
-		connection.subs.forEach( (key, index, node) => {
-			if (typeof key === 'string') {
-				(key in state.subscriptions) || (state.subscriptions[key] = {} )
-				state.subscriptions[key][connection._id] = connection;
-			}
-		});
+		(ePoint in state.subscriptions) || (state.subscriptions[ePoint] = {} )
+		state.subscriptions[ePoint][connection._id] = connection;
 
-		delete state.connections[connection._id];
-	}
+	});
 
 
+	delete state.connections[connection._id];
 
 
 
@@ -210,7 +366,6 @@ function handleSubscription(connection) {
 
 	connection.response.write( `${separator}0${separator}` );
 	console.log( `[${connection._id}]: ${separator}0${separator}` );
-
 
 }
 
