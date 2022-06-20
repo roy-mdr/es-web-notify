@@ -17,22 +17,30 @@ const options_secure = {
 };
 
 
-// https.createServer(onRequest).listen(NODE_PORT/*, NODE_HOST*/);
-const server = http.createServer();
-server.on('request', onRequest);
-server.setTimeout(0);
-server.listen(NODE_PORT);
-console.log(`Server started.`, `Listening on port: ${NODE_PORT}`, `Default timeout: ${server.timeout}`);
+
+// Connect to DB
+notifDb.connectDb()
+	.then( (conn) => {
+
+		// https.createServer(onRequest).listen(NODE_PORT/*, NODE_HOST*/);
+		const server = http.createServer();
+		server.on('request', onRequest);
+		server.setTimeout(0);
+		server.listen(NODE_PORT);
+		console.log(`Server started.`, `Listening on port: ${NODE_PORT}`, `Default timeout: ${server.timeout}`);
 
 
 
-// we create a server with automatically binding to a server request listener
-// https.createServer(onRequest).listen(NODE_PORT/*, NODE_HOST*/);
-const server_secure = https.createServer(options_secure);
-server_secure.on('request', onRequest);
-server_secure.setTimeout(0);
-server_secure.listen(NODE_PORT_SECURE);
-console.log(`Secure server started.`, `Listening on port: ${NODE_PORT_SECURE}`, `Default timeout: ${server_secure.timeout}`);
+		// we create a server with automatically binding to a server request listener
+		// https.createServer(onRequest).listen(NODE_PORT/*, NODE_HOST*/);
+		const server_secure = https.createServer(options_secure);
+		server_secure.on('request', onRequest);
+		server_secure.setTimeout(0);
+		server_secure.listen(NODE_PORT_SECURE);
+		console.log(`Secure server started.`, `Listening on port: ${NODE_PORT_SECURE}`, `Default timeout: ${server_secure.timeout}`);
+
+	} )
+
 
 
 
@@ -41,6 +49,7 @@ const state = {
 	nextId: 0,
 	connections: {},
 	clids: {},
+	clid_headers: {},
 	topics: {}
 };
 
@@ -103,82 +112,58 @@ function onRequest(request, response) {
 					}
 
 					if ( jBody.ep == undefined || !Array.isArray(jBody.ep) ) {
-						response.writeHead(444, 'Event Points should be an array', { 'Access-Control-Allow-Origin' : '*' });
+						response.writeHead(400, 'Event Points should be an array', { 'Access-Control-Allow-Origin' : '*' });
 						response.end();
 						return;
 					}
 
 
 
-
-					jBody.binded = false;
 					if ( jBody.bind_key !== undefined ) {
 						// This means that all the Event Points should be binded to the USER_ID doing the request.
-						// This is acomplished prepending "bind:USER_ID" to the topic requested
+						// This is acomplished prepending "@bind@" to the topic requested (for perfomance) ??? + adding the USER_ID to the connection (for security)
 
 						// The USER_ID comes from asking it to the server, when sending the encrypted data in jBody.bind_key
 						// If they requested a binding but there was not user registered in the session, the user will be "[][][]"
-						getUserIdFromServer(jBody.bind_key, (uid) => {
+						try {
 
-							jBody.binded = true;
+							getUserIdFromServer(jBody.bind_key, (uid) => {
 
-							delete jBody.bind_key;
+								delete jBody.bind_key;
 
-							if (uid == "" || uid == "__DONT__") {
-								response.writeHead(400, `Don't even try`, { 'Access-Control-Allow-Origin' : '*' });
-								response.end();
-								return;
-							}
+								parseSubscriberEPoints(jBody.ep, uid)
+									.then( newEp => {
+										jBody.ep = newEp;
+										handleSubscription( trackConnection(url_parts, jBody, request, response) );
+									})
+									.catch( ex => {
+										response.writeHead(400, ex, { 'Access-Control-Allow-Origin' : '*' });
+										response.end();
+										return;
+									});
 
-							if (uid == "server_error") {
-								response.writeHead(500, `Error connecting to binding server.`, { 'Access-Control-Allow-Origin' : '*' });
-								response.end();
-								return;
-							}
 
-							for (let i = 0, jbepl = jBody.ep.length; i < jbepl; i++) {
-								const ePoint = jBody.ep[i];
+							});
 
-								if (typeof ePoint !== 'string') {
-									response.writeHead(400, 'Event Point should be a string', { 'Access-Control-Allow-Origin' : '*' });
-									response.end();
-									return;
-								}
-
-								/*****************************************************/
-								/***** EVALUATE ACCESS/PERMISSION TO EVENT POINT *****/
-								/*****************************************************/
-
-								jBody.ep[i] = `bind:${uid}/${ePoint}`;
-
-								if (i == jBody.ep.length - 1) {
-									handleSubscription( trackConnection(url_parts, jBody, request, response) );
-								}
-							}
-
-						});
+						} catch(exc) {
+							response.writeHead(400, exc, { 'Access-Control-Allow-Origin' : '*' });
+							response.end();
+							return;
+						}
+						
 						
 					} else {
 
-						for (let i = 0, jbepl = jBody.ep.length; i < jbepl; i++) {
-							const ePoint = jBody.ep[i];
-
-							if (typeof ePoint !== 'string') {
-								response.writeHead(400, 'Event Point should be a string', { 'Access-Control-Allow-Origin' : '*' });
+						parseSubscriberEPoints(jBody.ep)
+							.then( newEp => {
+								jBody.ep = newEp;
+								handleSubscription( trackConnection(url_parts, jBody, request, response) );
+							})
+							.catch( ex => {
+								response.writeHead(400, ex, { 'Access-Control-Allow-Origin' : '*' });
 								response.end();
 								return;
-							}
-
-							/*****************************************************/
-							/***** EVALUATE ACCESS/PERMISSION TO EVENT POINT *****/
-							/*****************************************************/
-
-							if (i == jBody.ep.length - 1) {
-								handleSubscription( trackConnection(url_parts, jBody, request, response) );
-							}
-						}
-						
-						// handleSubscription( trackConnection(url_parts, jBody, request, response) );
+							});
 
 					}
 
@@ -248,14 +233,81 @@ function onRequest(request, response) {
 						return;
 					}
 
-					const safeEvent = {
-							ep: jBody.ep,
-							e: {
-								type: jBody.e.type,
-								info: jBody.e.info === undefined ? undefined : jBody.e.info
+					const toQuery = [];
+
+					for (let i = 0; i < jBody.ep.length; i++) {
+
+						const ePoint = jBody.ep[i];
+
+						if (ePoint === null) {
+							// throw "Event Point can't be null";
+							response.writeHead(400, "Event Point can't be null", { 'Access-Control-Allow-Origin' : '*' });
+							response.end();
+							return;
+						}
+
+						if (typeof ePoint === 'string') {
+							emitEvent({
+								ep: {
+									topic: ePoint
+								},
+								e: {
+									type: jBody.e.type,
+									detail: jBody.e.detail === undefined ? undefined : jBody.e.detail
+								}
+							});
+						}
+
+						if (typeof ePoint === 'object') {
+
+							if ( ePoint.topic == undefined ) {
+								// throw 'Topic missing';
+								response.writeHead(400, 'Topic missing', { 'Access-Control-Allow-Origin' : '*' });
+								response.end();
+								return;
 							}
-						};
-					if ('bind_key' in jBody) {
+
+							if ( typeof ePoint.topic !== 'string' ) {
+								// throw 'Topic should be a string';
+								response.writeHead(400, 'Topic should be a string', { 'Access-Control-Allow-Origin' : '*' });
+								response.end();
+								return;
+							}
+
+							if ( ePoint.whisper !== undefined ) {
+								if ( typeof ePoint.whisper !== 'number' || !Number.isInteger(ePoint.whisper) ) {
+									response.writeHead(400, 'Invalid connection id in whisper', { 'Access-Control-Allow-Origin' : '*' });
+									response.end();
+									return;
+								}
+							}
+
+							if (jBody.bind_key === undefined) {
+								emitEvent({
+									ep: {
+										topic: ePoint.topic,
+										whisper: ePoint.whisper
+									},
+									e: {
+										type: jBody.e.type,
+										detail: jBody.e.detail === undefined ? undefined : jBody.e.detail
+									}
+								});
+							} else {
+								toQuery.push(ePoint.topic);
+							}
+						}
+					}
+
+					if (toQuery.length == 0) {
+						response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
+						response.end();
+						return;
+					}
+
+					if (jBody.bind_key !== undefined) {
+
+						// Get USER_ID from bind_key
 
 						const base64ToDecrypt = jBody.bind_key;
 						let decryptedBindKey;
@@ -315,15 +367,12 @@ function onRequest(request, response) {
 						/* FORMAT NEW EVENT WITH USER_IDs IN TOPIC */ // bind:user_id/event_point
 						/* EMIT EVENT */
 
-						safeEvent.ep = [];
-
-						const epQuery = "SELECT `pub`, `sub`, `pub_password` FROM `registered_endpoints` WHERE `endpoint` = " + "'" + jBody.ep.join("' OR `endpoint` = '") + "'";
+						const epQuery = "SELECT `pub`, `sub`, `pub_password` FROM `registered_endpoints` WHERE `endpoint` = " + "'" + toQuery.join("' OR `endpoint` = '") + "'";
 
 						// Connect to DB
 						notifDb.connectDb()
 							.then( (conn) => conn.query(epQuery) )
 							.then( (rows) => {
-
 
 								for (let rowIndex = 0, rl = rows.length; rowIndex < rl; rowIndex++) {
 									const row = rows[rowIndex];
@@ -336,40 +385,41 @@ function onRequest(request, response) {
 
 									if ( allowPub.includes(decryptedBindKey.uid) ) { // Evaluate credentials to publish event
 
-										for (let shIndex = 0, asl = allowSub.length; shIndex < asl; shIndex++) {
-											const shId = allowSub[shIndex];
-
-											switch (shId) {
-												case "+":
-													safeEvent.ep.push( `+/${jBody.ep[rowIndex]}` );
-													break;
-
-												case "*":
-													safeEvent.ep.push(   `${jBody.ep[rowIndex]}` );
-													safeEvent.ep.push( `+/${jBody.ep[rowIndex]}` );
-													break;
-
-												default:
-													safeEvent.ep.push( `bind:${shId}/${jBody.ep[rowIndex]}` );
-													break;
-											}
-										}
-
 										try {
 
-											emitEvent(safeEvent);
+											emitEvent({
+												ep: {
+													topic: `@bind@/${toQuery[rowIndex]}`,
+													allowedSubs: allowSub,
+													whisper: ePoint.whisper
+												},
+												e: {
+													type: jBody.e.type,
+													detail: jBody.e.detail === undefined ? undefined : jBody.e.detail
+												}
+											});
+
+											if (allowSub.includes("*")) {
+												emitEvent({
+													ep: {
+														topic: toQuery[rowIndex],
+														whisper: ePoint.whisper
+													},
+													e: {
+														type: jBody.e.type,
+														detail: jBody.e.detail === undefined ? undefined : jBody.e.detail
+													}
+												});
+											}
 
 										} catch(err) {
 											response.writeHead(400, err, { 'Access-Control-Allow-Origin' : '*' });
 											response.end();
 											return;
 										}
-										// finally {
-											
-										// }
 
 									} else {
-										console.log(`${decryptedBindKey.uid} can't publish to ${jBody.ep[rowIndex]}`);
+										console.log(`${decryptedBindKey.uid} can't publish to ${jBody.ep[rowIndex].topic}`);
 									}
 								}
 
@@ -388,23 +438,6 @@ function onRequest(request, response) {
 							});
 
 
-					} else {
-
-						try {
-
-							emitEvent(safeEvent);
-
-						} catch(err) {
-							response.writeHead(400, err, { 'Access-Control-Allow-Origin' : '*' });
-							response.end();
-							return;
-						}
-						// finally {
-							response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
-							response.end();
-							return;
-						// }
-
 					}
 					
 
@@ -422,7 +455,7 @@ function onRequest(request, response) {
 
 
 
-			case "/connections":
+		case "/connections":
 
 			if (request.method == 'GET') {
 
@@ -430,20 +463,55 @@ function onRequest(request, response) {
 				/***** EVALUATE AUTHORIZATION TO GET CONNECTIONS (MAYBE ONLY USER CAN SEE OWNED CONNECTIONS) *****/
 				/*************************************************************************************************/
 
-				let clidConnected = 0;
 
-				if ( url_parts.query.clid != undefined && state.clids.hasOwnProperty(url_parts.query.clid) ) {
-					clidConnected = state.clids[url_parts.query.clid];
+				if ( url_parts.query.clid != undefined ) {
+
+					if ( url_parts.query.details != undefined && url_parts.query.details == "true" ) {
+
+						let clidConnHeaders = {};
+
+						if ( state.clid_headers.hasOwnProperty(url_parts.query.clid) ) {
+							clidConnHeaders = state.clid_headers[url_parts.query.clid];
+						}
+
+						response.writeHead(200, { 'Access-Control-Allow-Origin' : '*', 'content-type' : 'application/json;charset=utf-8' });
+						// console.log( Object.keys(state.connections) );
+						// console.log( state.topics );
+						response.write( JSON.stringify(clidConnHeaders) );
+						response.end();
+						return;
+
+					} else {
+
+						let clidConnected = 0;
+
+						if (state.clids.hasOwnProperty(url_parts.query.clid)) {
+							clidConnected = state.clids[url_parts.query.clid];
+						}
+
+						console.log(clidConnected);
+						
+						response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
+						// console.log( Object.keys(state.connections) );
+						// console.log( state.topics );
+						response.write(clidConnected.toString());
+						response.end();
+						return;
+
+					}
+
+				} else {
+
+					response.writeHead(200, { 'Access-Control-Allow-Origin' : '*', 'content-type' : 'application/json;charset=utf-8' });
+					// console.log( Object.keys(state.connections) );
+					// console.log( state.topics );
+					response.write( JSON.stringify(state.clids) );
+					response.end();
+					return;
+
 				}
 
-				console.log(clidConnected);
 				
-				response.writeHead(200, { 'Access-Control-Allow-Origin' : '*' });
-				// console.log( Object.keys(state.connections) );
-				// console.log( state.topics );
-				response.write(clidConnected.toString());
-				response.end();
-				return;
 
 			}
 
@@ -501,6 +569,17 @@ function trackConnection(parsed_url, parsed_body = {}, request, response) {
 		state.clids['@TOTAL@'] = 1;
 	}
 
+	if ( !state.clid_headers.hasOwnProperty(connection.body.clid) ) {
+		state.clid_headers[connection.body.clid] = {};
+	}
+
+	if ( !state.clid_headers[connection.body.clid].hasOwnProperty(connection._id) ) {
+		state.clid_headers[connection.body.clid][connection._id] = {
+			headers: connection.request.headers,
+			body: connection.body
+		};
+	}
+
 
 	connection.onClose	= (err) => {
 			console.log(`Connection [${connection._id}](${connection.body.clid}) closed default.`);
@@ -516,6 +595,11 @@ function trackConnection(parsed_url, parsed_body = {}, request, response) {
 			state.clids['@TOTAL@']--;
 			if (state.clids['@TOTAL@'] == 0) {
 				delete state.clids['@TOTAL@'];
+			}
+
+			delete state.clid_headers[connection.body.clid][connection._id];
+			if (Object.keys(state.clid_headers[connection.body.clid]).length == 0) {
+				delete state.clid_headers[connection.body.clid];
 			}
 
 		}
@@ -545,7 +629,7 @@ function handleSubscription(connection) {
 			console.log(`Connection [${connection._id}](${connection.body.clid}) hard-coded timed out.`);
 			connection.request.removeListener('close', connection.onClose);
 			connection.onClose();
-		}, 5 * 60 * 1000);
+		}, 5 * 60 * 1000); // 5 minutes
 
 	connection.request.removeListener('close', connection.onClose);
 	connection.onClose	= (err) => {
@@ -553,10 +637,12 @@ function handleSubscription(connection) {
 				console.log(`Connection [${connection._id}](${connection.body.clid}) closed.`);
 
 				emitEvent({
-					ep: [`${connection.body.clid}/@CONNECTION@`],
+					ep: {
+						topic: `@CONNECTION@/${connection.body.clid}`
+					},
 					e: {
 						type: 'disconnect',
-						info: {
+						detail: {
 							clid_instances: state.clids[connection.body.clid] - 1
 						}
 					}
@@ -567,17 +653,18 @@ function handleSubscription(connection) {
 				
 				connection.response.end();
 				if ( 'ep' in connection.body) {
-					for (let index = 0, cbepl = connection.body.ep.length; index < cbepl; index++) {
+
+					for (let index = 0, cbep = connection.body.ep.length; index < cbep; index++) {
 						const ePoint = connection.body.ep[index];
 
-						if ( ePoint in state.topics ) {
+						if ( ePoint.topic in state.topics ) {
 
-							if ( connection._id in state.topics[ePoint] ) {
-								delete state.topics[ePoint][connection._id];
+							if ( connection._id in state.topics[ePoint.topic] ) {
+								delete state.topics[ePoint.topic][connection._id];
 							}
 
-							if ( Object.keys(state.topics[ePoint]).length == 0) {
-								delete state.topics[ePoint];
+							if ( Object.keys(state.topics[ePoint.topic]).length == 0) {
+								delete state.topics[ePoint.topic];
 							}
 						}
 					}
@@ -597,7 +684,21 @@ function handleSubscription(connection) {
 					delete state.clids['@TOTAL@'];
 				}
 
+				delete state.clid_headers[connection.body.clid][connection._id];
+				if (Object.keys(state.clid_headers[connection.body.clid]).length == 0) {
+					delete state.clid_headers[connection.body.clid];
+				}
+
 				connection = undefined;
+
+				/* --- CHECK MEMORY --- */
+				console.log("---------- MEMORY STATUS ----------")
+				const used = process.memoryUsage();
+				for (let key in used) {
+				  console.log(`${key} ${Math.round(used[key] / 1024 / 1024 * 100) / 100} MB`);
+				}
+				console.log("-----------------------------------")
+				/* -------------------- */
 
 			}
 		}
@@ -607,15 +708,24 @@ function handleSubscription(connection) {
 
 	/* HANDLE REQUEST BODY */
 
-	for (let index = 0, cbepl = connection.body.ep.length; index < cbepl; index++) {
+	for (let index = 0, cbep = connection.body.ep.length; index < cbep; index++) {
 		const ePoint = connection.body.ep[index];
 
-		(ePoint in state.topics) || (state.topics[ePoint] = {} )
-		state.topics[ePoint][connection._id] = connection;
+		(ePoint.topic in state.topics) || (state.topics[ePoint.topic] = {} )
+		state.topics[ePoint.topic][connection._id] = {
+				// bind: ePoint.bind,
+				conn: connection
+			};
+		if (ePoint.bind !== undefined) state.topics[ePoint.topic][connection._id].bind = ePoint.bind;
 	}
 
 
 	delete state.connections[connection._id];
+
+	console.log(connection.request.headers);
+	// console.log(connection.request.connection.server);
+	// console.log(connection.request.connection.server.sessionIdContext);
+	// console.log(connection.request.connection.remoteAddress);
 
 
 
@@ -625,7 +735,7 @@ function handleSubscription(connection) {
 
 			'Access-Control-Allow-Origin' : '*',
 
-			'content-type' : 'text/plain; charset=utf-8', // BROWSER WILL WAIT BUFFER... TO PREVT THAT YOU MUST 'x-content-type-options: nosniff'.
+			'content-type' : 'text/plain;charset=utf-8', // BROWSER WILL WAIT BUFFER... TO PREVT THAT YOU MUST 'x-content-type-options: nosniff'.
 			'x-content-type-options' : 'nosniff', // BROWSER WON'T WAIT BUFFER (RECEIVE BYTES IMMEDIATELY) ON 'content-type: text/plain'
 
 			// 'content-type' : 'application/x-json', // "application/anything" BROWSER WON'T WAIT BUFFER (RECEIVE BYTES IMMEDIATELY)
@@ -640,19 +750,48 @@ function handleSubscription(connection) {
 
 		});
 
-	connection.response.write( `${separator}0${separator}` );
-	console.log( `[${connection._id}](${connection.body.clid}): ${separator}0${separator}` );
+
 
 	/* CONNECTED! */
+	// console.log(state.topics)
 	emitEvent({
-		ep: [`${connection.body.clid}/@CONNECTION@`],
+		ep: {
+			topic: `@CONNECTION@/${connection.body.clid}`
+		},
 		e: {
 			type: 'connect',
-			info: {
+			detail: {
 				clid_instances: state.clids[connection.body.clid]
 			}
 		}
 	});
+
+
+
+
+
+	// Write initial response to connection
+
+	const initOutData = formatOutEvent({
+		topic_requested: '@SERVER@',
+		topic_emitted:   '@SERVER@',
+		type:   'info',
+		detail: {
+			connid: connection._id,
+			borrar_esta_linea: "en lo que hago que los ESP parseen JSON"
+		}
+	});
+
+	connection.response.write( initOutData ); // SEND DATA TO SUBSCRIBER
+	resetTick(connection);
+
+	console.log( `[${connection._id}](${connection.body.clid}): ${initOutData}` );
+
+
+
+
+
+	topicsMiddleware(connection);
 
 }
 
@@ -681,37 +820,46 @@ function resetTick(connection) {
 
 
 
+function formatOutEvent(evObj) {
+
+	const jData = JSON.stringify({
+		iat: Date.now(),
+		ep: {
+			requested: evObj.topic_requested,
+			emitted:   evObj.topic_emitted
+		},
+		e: {
+			type: evObj.type,
+			detail: evObj.detail
+		}
+	})
+	.replace(/\'/g, '\\u0027'); // UNICODE ESCAPE: '
+
+	return `${separator}${jData.length}${separator}${jData}`; // FORMAT RESPONSE
+
+}
+
+
+
+
 
 function emitEvent(evObj) {
 
 
-
-	// VALIDATE EVENT OBJECT //
-
-	if (
-		   evObj.ep == undefined
-		|| evObj.e == undefined
-		|| evObj.e.type == undefined
-		|| !Array.isArray(evObj.ep)
-		|| typeof evObj.e.type !== 'string'
-		) {
-
-		throw 'Invalid event object';
-	}
-
-
-
-	// VALIDATE EVENT INFO DATA //
-
-	/*if (
-		   evObj.e !== undefined
-		&& evObj.e.info !== undefined
-		&& typeof evObj.e.info !== 'string'
-		) {
-		response.writeHead(400, 'Data should be  string', { 'Access-Control-Allow-Origin' : '*' });
-		response.end();
-		return;
-	}*/
+	/*
+		Expects evObj:
+		{
+			ep: {
+				topic: String,
+				allowedSubs: Uid[], // Otional
+				whisper: ConnId // Optional
+			},
+			e: {
+				type: String,
+				detail: Any // Optional
+			}
+		}
+	*/
 
 
 
@@ -723,37 +871,56 @@ function emitEvent(evObj) {
 
 	// EMIT EVENT TO EACH SUBSCRIBER //
 
-	for (var sIx = 0, subl = subscribers.length; sIx < subl; sIx++) {
+	for (let sIx = 0, sl = subscribers.length; sIx < sl; sIx++) {
 		const subscriber = subscribers[sIx];
 
-		console.log(`Topics matched!`, `Requested: "${subscriber.topicRequested}"`, `Emitted: "${subscriber.topicEmitted}"`)
+		let allowed = true;
 
-		const jData = JSON.stringify({
-			iat: Date.now(),
-			payload: {
-				ep: {
-					requested: subscriber.connection.body.binded ? removeBindId(subscriber.topicRequested) : subscriber.topicRequested,
-					emitted:   subscriber.connection.body.binded ? removeBindId(subscriber.topicEmitted)   : subscriber.topicEmitted
-				},
-				e: {
-					type: evObj.e.type,
-					info: evObj.e.info === undefined ? undefined : evObj.e.info
+		if (subscriber.bind !== undefined) {
+			// Este topico solo puede ser emitido por un evento binded.
+			allowed = false;
+
+			if ( evObj.ep.allowedSubs !== undefined && Array.isArray(evObj.ep.allowedSubs) ) {
+				// Fue emitido por un evento binded! comprobando permisos...
+				if ( evObj.ep.allowedSubs.includes("*") || evObj.ep.allowedSubs.includes("+") || evObj.ep.allowedSubs.includes(subscriber.bind) ) {
+					allowed = true;
 				}
 			}
-		})
-		.replace(/\'/g, '\\u0027'); // UNICODE ESCAPE: '
+			
+		}
 
-		const outData = `${separator}${jData.length}${separator}${jData}`; // FORMAT RESPONSE
+		if ( evObj.ep.whisper !== undefined && evObj.ep.whisper !== subscriber.connection._id ) {
+			// Event may not be whispered to this subscriber!
+			allowed = false;
+		}
 
-		console.log( `DEBUGGING. SENDING EVENT TO SUBSCRIBER: [${subscriber.connection._id}](${subscriber.connection.body.clid})` );
+
+
+		if (!allowed) {
+			continue;
+		}
+
+
+
+
+		console.log(`Topics matched! (${subscriber.bind})`, `Requested: "${subscriber.topicRequested}"`, `Emitted: "${subscriber.topicEmitted}"`)
+
+
+		const outData = formatOutEvent({
+			topic_requested: subscriber.bind !== undefined ? removeBindId(subscriber.topicRequested) : subscriber.topicRequested,
+			topic_emitted:   subscriber.bind !== undefined ? removeBindId(subscriber.topicEmitted)   : subscriber.topicEmitted,
+			type:   evObj.e.type,
+			detail: evObj.e.detail === undefined ? undefined : evObj.e.detail
+		});
+
 		subscriber.connection.response.write( outData ); // SEND DATA TO SUBSCRIBER
 		resetTick(subscriber.connection);
 
 		console.log( `[${subscriber.connection._id}](${subscriber.connection.body.clid}): ${outData}` );
+
 	}
 
 	return true;
-
 
 }
 
@@ -761,66 +928,66 @@ function emitEvent(evObj) {
 
 
 
-function getSubscribers(arrayTopics) { // MQTT-topics Style
+function getSubscribers(ePoint) { // MQTT-topics Style
 
-	/* THIS FUNCTION RETURNS AN ARRAY OF { TOPICS AND CONNECTIONS } OF THE SUBSCRIBERS
-	   SUBSCRIBED TO THE GIVEN TOPICS IN arrayTopics */
+	/* THIS FUNCTION RETURNS AN ARRAY OF CONNECTIONS OF THE SUBSCRIBERS SUBSCRIBED TO THE GIVEN TOPIC */
 
 
 
 	const subscribers = [];
 
-	for (let indx = 0, atl = arrayTopics.length; indx < atl; indx++) {
-		const ePoint = arrayTopics[indx];
+	if (typeof ePoint.topic === undefined) {
+		throw 'Topic missing';
+	}
 
-		if (typeof ePoint !== 'string') {
-			throw 'End Point should be a string';
-		}
+	if (typeof ePoint.topic !== 'string') {
+		throw 'Topic should be a string';
+	}
 
-		const arr1 = ePoint.split('/');
+	const arr1 = ePoint.topic.split('/');
 
-		for (const [subsId, subs] of Object.entries(state.topics)) {
+	for (const [subsId, subs] of Object.entries(state.topics)) {
 
-			const arr2 = subsId.split('/');
+		const arr2 = subsId.split('/');
 
-			let matched = true;
-			const times = arr1.length > arr2.length ? arr1.length : arr2.length;
-			for (let i = 0; i < times; i++) {
+		let matched = true;
+		const times = arr1.length > arr2.length ? arr1.length : arr2.length;
+		for (let i = 0; i < times; i++) {
 
-				if (arr1[i] == undefined || arr2[i] == undefined) {
-					matched = false;
-					break;
-				}
-
-				if (
-					   (arr1[i] == "#" && i == arr1.length - 1)
-					|| (arr2[i] == "#" && i == arr2.length - 1)
-					) {
-					break;
-				}
-
-				if (
-					   (arr1[i] == "+" && i != arr1.length - 1)
-					|| (arr2[i] == "+" && i != arr2.length - 1)
-					) {
-					continue;
-				}
-
-				if (arr1[i] != arr2[i]) {
-					matched = false;
-					break;
-				}
+			if (arr1[i] == undefined || arr2[i] == undefined) {
+				matched = false;
+				break;
 			}
 
-			if (matched) {
+			if (
+				   (arr1[i] == "#" && i == arr1.length - 1)
+				|| (arr2[i] == "#" && i == arr2.length - 1)
+				) {
+				break;
+			}
 
-				for (const [connId, conn] of Object.entries(subs)) {
-					subscribers.push({
-						topicRequested: subsId,
-						topicEmitted: ePoint,
-						connection: conn
-					});
-				}
+			if (
+				   (arr1[i] == "+" && i != arr1.length - 1)
+				|| (arr2[i] == "+" && i != arr2.length - 1)
+				) {
+				continue;
+			}
+
+			if (arr1[i] != arr2[i]) {
+				matched = false;
+				break;
+			}
+		}
+
+		if (matched) {
+
+			for (const [connId, conn] of Object.entries(subs)) {
+				subscribers.push({
+					topicRequested: subsId,
+					topicEmitted: ePoint.topic,
+					bind: conn.bind,
+					connection: conn.conn
+				});
 			}
 		}
 	}
@@ -866,12 +1033,15 @@ function getUserIdFromServer(base64String, callback) {
 			try {
 				userId = JSON.parse(body.toString());
 			} catch(err) {
-				console.log(`Invalid JSON in body from binding server.`);
 				// console.log('Binding server response:');
 				// console.log(body.toString());
-				callback("server_error");
-				return;
+				console.log(`Invalid JSON in body from binding server.`);
+				throw `Error connecting to binding server`;
 			} finally {
+
+				if (userId == "" || userId == "__DONT__") {
+					throw `Don't even try`;
+				}
 
 				callback(userId);
 				return;
@@ -883,14 +1053,13 @@ function getUserIdFromServer(base64String, callback) {
 
 	req.on('error', (e) => {
 		console.log(`problem with request: ${e.message}`);
-		callback("server_error");
-		return;
+		throw `Error connecting to binding server`;
 	});
 
 	// Write data to request body
 	req.write(postData);
 	req.end();
-	return;
+	// return;
 
 }
 
@@ -904,4 +1073,119 @@ function removeBindId(topicString) {
 	arr1.shift();
 	return arr1.join('/');
 
+}
+
+
+
+
+
+function parseSubscriberEPoints(ePointArray, uid = undefined) {
+
+	return new Promise( (resolve, reject) => {
+
+		if ( !(Array.isArray(ePointArray)) ) {
+			reject('Event Points should be an array (internal error)');
+		}
+
+		const arrReturn = [];
+
+		if (ePointArray.length == 0) resolve(arrReturn);
+
+		for (let index = 0, epl = ePointArray.length; index < epl; index++) {
+			const ePoint = ePointArray[index];
+
+			if ( (typeof ePoint !== 'string') && (typeof ePoint !== 'object') ) {
+				reject('Invalid Event Point');
+			}
+
+			let ePointTopic = '';
+			let bindedTarget = undefined;
+
+			if (typeof ePoint === 'string') {
+				ePointTopic = ePoint;
+			}
+
+			if (typeof ePoint === 'object') {
+
+				if ( ePoint.topic == undefined ) {
+					reject('Topic missing');
+				}
+
+				if ( typeof ePoint.topic !== 'string' ) {
+					reject('Topic should be a string');
+				}
+
+
+				if ( (ePoint.binded !== undefined && ePoint.binded === true) && uid !== undefined ) {
+					bindedTarget = uid;
+					ePointTopic = `@bind@/${ePoint.topic}`;
+				} else {
+					ePointTopic = ePoint.topic;
+				}
+			}
+
+			/*****************************************************/
+			/***** EVALUATE ACCESS/PERMISSION TO EVENT POINT *****/
+			/*****************************************************/
+
+			arrReturn.push({
+				topic: ePointTopic,
+				bind: bindedTarget,
+			});
+
+
+			if (index == epl - 1) {
+				resolve(arrReturn);
+			}
+		}
+
+	} );
+
+	
+
+}
+
+
+
+
+
+
+
+function topicsMiddleware(connection) {
+
+	const topicsArray = connection.body.ep;
+
+	for (let i = 0; i < topicsArray.length; i++) {
+
+		// if subscribed to "@CONNECTION@/clid" emit event how many instances are connected
+		if ( /^@CONNECTION@\/[^\/]+$/.test(topicsArray[i].topic) ) {
+
+			const clid = topicsArray[i].topic.split('/')[1];
+
+			let clidConnected = 0;
+
+			if (state.clids.hasOwnProperty(clid)) {
+				clidConnected = state.clids[clid];
+			}
+
+
+			// Write response to connection
+
+			const outData = formatOutEvent({
+				topic_requested: topicsArray[i].topic,
+				topic_emitted:   topicsArray[i].topic,
+				type:   'available',
+				detail: {
+					clid_instances: clidConnected.toString()
+				}
+			});
+
+			connection.response.write( outData ); // SEND DATA TO SUBSCRIBER
+			resetTick(connection);
+
+			console.log( `[${connection._id}](${connection.body.clid}): ${outData}` );
+
+		}
+		
+	}
 }
