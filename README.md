@@ -19,6 +19,16 @@ Made before I knew about MQTT and then adopting some of it 😅 so maybe just us
 - [ ] Add websockets API
 - [ ] Add raw TCP API
 
+## Setup
+
+1. Connect to a database exposing `connectDb()` in a `module.exports`.
+    1. If your database is MariaDB just fill the already set module in `/mdb` folder:
+        1. Edit */mdb/index.js* and replace `DATABASE_USER` and `DATABASE_PASSWORD` with your credentials (or use node ENV)
+        1. Run `npm install` in the `/mdb` folder
+1. Point to your *.key* and *.cert* files for creating an HTTPS secure server. (In my case the Synology NAS certificates)
+1. Create user-binding credentials modifying the `privateKey` and `publicKey` variables (line 56 and 60). I think this should be the same as the user-binding server but I'm not sure... need to test.
+1. DONE! Run `node server/index.js` or `nohup node server/index.js > "server/[$(date +%F)]stdout.txt" 2> "server/[$(date +%F)]stderr.txt" &` to run permanently. Run `killall -9 node` to kill the proces (And every node instance running 😂 oops)
+
 ## API
 
 `/`
