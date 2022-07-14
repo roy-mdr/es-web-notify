@@ -9,6 +9,7 @@ Made before I knew about MQTT and then adopting some of it 😅 so maybe just us
 
 ## To Do
 
+- [ ] Detect immediately when a client disconnects
 - [ ] Migrate keys to external file
 - [ ] Fix all the mixed up using of "event point", "channel" and "topic"
 - [ ] Organize code
