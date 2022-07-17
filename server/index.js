@@ -604,7 +604,7 @@ function trackConnection(parsed_url, parsed_body = {}, request, response) {
 
 		}
 
-	connection.request.on('close', connection.onClose);
+	connection.request.connection.on('close', connection.onClose);
 
 
 	console.log(`Connection ID: ${connection._id}`);
@@ -627,11 +627,11 @@ function handleSubscription(connection) {
 
 	connection.timeout	= setTimeout( () => {
 			console.log(`Connection [${connection._id}](${connection.body.clid}) hard-coded timed out.`);
-			connection.request.removeListener('close', connection.onClose);
+			connection.request.connection.removeListener('close', connection.onClose);
 			connection.onClose();
 		}, 5 * 60 * 1000); // 5 minutes
 
-	connection.request.removeListener('close', connection.onClose);
+	connection.request.connection.removeListener('close', connection.onClose);
 	connection.onClose	= (err) => {
 			if (connection !== undefined) {
 				console.log(`Connection [${connection._id}](${connection.body.clid}) closed.`);
@@ -702,7 +702,7 @@ function handleSubscription(connection) {
 
 			}
 		}
-	connection.request.on('close', connection.onClose);
+	connection.request.connection.on('close', connection.onClose);
 
 
 
