@@ -434,7 +434,7 @@ class NoPollSubscriber {
 
 				const parseUrl = new URL(obj._XHR.url);
 
-				obj._XHR.headers['Content-Length'] = Buffer.byteLength(obj._XHR.data);
+				obj._XHR.headers['Content-Length'] = Buffer.byteLength(obj._XHR.data).toString();
 
 				const options = {
 					hostname: parseUrl.hostname,
