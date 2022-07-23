@@ -1,15 +1,15 @@
 const mariadb = require('mariadb');
 
 const notifPool = mariadb.createPool({
-		// host: 'localhost',
-		// port: 3306,
+		host: 'localhost',
+		port: 3306,
 		// ssl: true,
 
 		// socketPath: '/tmp/mysql.sock',
-		socketPath: '/run/mysqld/mysqld10.sock',
+		// socketPath: '/run/mysqld/mysqld10.sock',
 
-		user:'DATABASE_USER',
-		password: 'DATABASE_PASSWORD',
+		user:'root',
+		password: '',
 
 		rowsAsArray: true, // ?
 		connectionLimit: 1,

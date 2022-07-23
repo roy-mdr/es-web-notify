@@ -1,20 +1,13 @@
 
-const notifDb = require("./mdb");
+const notifDb   = require("./mdb");
+const serverCfg = require("./options.js");
 
 const http	 = require("http");
 const https  = require("https");
 const url    = require('url');
-const fs	 = require("fs");
 const crypto = require("crypto");
 
-const NODE_HOST			= "127.0.0.1"; // localhost
-const NODE_PORT			= 1010;
-const NODE_PORT_SECURE	= 1011;
 
-const options_secure = {
-	key: fs.readFileSync('/usr/syno/etc/certificate/_archive/WBwJuG/privkey.pem'),
-	cert: fs.readFileSync('/usr/syno/etc/certificate/_archive/WBwJuG/cert.pem')
-};
 
 
 
@@ -22,24 +15,25 @@ const options_secure = {
 notifDb.connectDb()
 	.then( (conn) => {
 
-		// https.createServer(onRequest).listen(NODE_PORT/*, NODE_HOST*/);
+		// https.createServer(onRequest).listen(serverCfg.NODE_PORT/*, serverConfig.NODE_HOST*/);
 		const server = http.createServer();
 		server.on('request', onRequest);
 		server.setTimeout(0);
-		server.listen(NODE_PORT);
-		console.log(`Server started.`, `Listening on port: ${NODE_PORT}`, `Default timeout: ${server.timeout}`);
+		server.listen(serverCfg.NODE_PORT);
+		console.log(`Server started.`, `Listening on port: ${serverCfg.NODE_PORT}`, `Default timeout: ${server.timeout}`);
 
 
 
 		// we create a server with automatically binding to a server request listener
-		// https.createServer(onRequest).listen(NODE_PORT/*, NODE_HOST*/);
-		const server_secure = https.createServer(options_secure);
+		// https.createServer(onRequest).listen(serverCfg.NODE_PORT/*, serverConfig.NODE_HOST*/);
+		const server_secure = https.createServer(serverCfg.options_secure);
 		server_secure.on('request', onRequest);
 		server_secure.setTimeout(0);
-		server_secure.listen(NODE_PORT_SECURE);
-		console.log(`Secure server started.`, `Listening on port: ${NODE_PORT_SECURE}`, `Default timeout: ${server_secure.timeout}`);
+		server_secure.listen(serverCfg.NODE_PORT_SECURE);
+		console.log(`Secure server started.`, `Listening on port: ${serverCfg.NODE_PORT_SECURE}`, `Default timeout: ${server_secure.timeout}`);
 
 	} )
+
 
 
 
@@ -52,14 +46,6 @@ const state = {
 	clid_headers: {},
 	topics: {}
 };
-
-const privateKey = `-----BEGIN RSA PRIVATE KEY-----
-SAME AS BINDING SERVER
------END RSA PRIVATE KEY-----`;
-
-const publicKey = `-----BEGIN PUBLIC KEY-----
-SAME AS BINDING SERVER
------END PUBLIC KEY-----`;
 
 
 
@@ -318,7 +304,7 @@ function onRequest(request, response) {
 							const decrypted = crypto.privateDecrypt(
 
 								{
-									key: privateKey,
+									key: serverCfg.local_privateKey,
 									padding: crypto.constants.RSA_PKCS1_PADDING
 								},
 
