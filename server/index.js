@@ -763,8 +763,7 @@ function handleSubscription(connection) {
 		topic_emitted:   '@SERVER@',
 		type:   'info',
 		detail: {
-			connid: connection._id,
-			borrar_esta_linea: "en lo que hago que los ESP parseen JSON"
+			connid: connection._id
 		}
 	});
 
