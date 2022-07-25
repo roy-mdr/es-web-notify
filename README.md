@@ -9,6 +9,12 @@ Made before I knew about MQTT and then adopting some of it 😅 so maybe just us
 
 ## To Do
 
+- [ ] Add example with whisper
+- [ ] Add example with binding key
+- [ ] Set own server for examples with node
+- [ ] Create NPM scripts for start and test
+- [ ] Refactor basic example without PHP involved...
+---
 - [ ] Detect immediately when a client disconnects
 - [ ] Migrate keys to external file
 - [ ] Fix all the mixed up using of "event point", "channel" and "topic"
@@ -24,11 +30,15 @@ Made before I knew about MQTT and then adopting some of it 😅 so maybe just us
 
 1. Connect to a database exposing `connectDb()` in a `module.exports`.
     1. If your database is MariaDB just fill the already set module in `/mdb` folder:
-        1. Edit */mdb/index.js* and replace `DATABASE_USER` and `DATABASE_PASSWORD` with your credentials (or use node ENV)
+        1. Edit *server/mdb/index.js* and replace `DATABASE_USER` and `DATABASE_PASSWORD` with your credentials (or use node ENV)
         1. Run `npm install` in the `/mdb` folder
-1. Point to your *.key* and *.cert* files for creating an HTTPS secure server. (In my case the Synology NAS certificates)
-1. Create user-binding credentials modifying the `privateKey` and `publicKey` variables (line 56 and 60). I think this should be the same as the user-binding server but I'm not sure... need to test.
+1. Edit *server/options.js*
+    1. Point to your *.key* and *.cert* files for creating an HTTPS secure server. (In my case the Synology NAS certificates)
+    1. Create user-binding credentials modifying the `privateKey` and `publicKey` variables (line 56 and 60). I think this should be the same as the user-binding server but I'm not sure... need to test.
 1. DONE! Run `node server/index.js` or `nohup node server/index.js > "server/[$(date +%F)]stdout.txt" 2> "server/[$(date +%F)]stderr.txt" &` to run permanently. Run `killall -9 node` to kill the proces (And every node instance running 😂 oops)
+
+### Test
+1. Copy *client* folder to laragon/xaamp server and go to `http://localhost/client/example/index.html`
 
 ## API
 
@@ -71,7 +81,7 @@ Al pasar una `BindKey` válida, se habilitan los `Event Points` permitidos para 
 > Ej. `Usuario_1` y `Usuario_2` se suscriben a `CASA/NIVEL_AGUA` y cada uno pasa su `BinKey`, pero solo `Usuario_1` tiene permitido recibir esa información, por lo que `Usuario_2` nunca recibe la notificación.
 
 `BindKey` = RSA_ENCRYPTED({iat, session_id})
-> Las BindKey tienen una expiración corta (~3seg) configurada en broker
+> Las BindKey tienen una expiración corta (\~3seg) configurada en broker
 
 Flujo:
 1. cliente web pide a servidor PHP el `BindKey` pasando su `PHP_SESION_ID` en una cookie (HTTPS ONLY)
@@ -109,7 +119,7 @@ peticion `POST` a `NOTIF. SERVER` en donde se especifiquen los `EVENT POINTS` a 
 Al pasar una `BindKey` válida, los `EVENT POINTS` serán dirigidos sólo a los usuarios que los pueden escuchar. De igual manera, seran evaluados los permisos para emitir el evento a los `EVENT POINTS` pasados.
 
 `BindKey` = RSA_ENCRYPTED({iat, user_id})
-> Las BindKey tienen una expiración corta (~3seg) configurada en broker
+> Las BindKey tienen una expiración corta (\~3seg) configurada en broker
 
 Flujo:
 1. cliente envía evento a servidor PHP destinado. Pasa su `PHP_SESION_ID` en una cookie (HTTPS ONLY)
@@ -145,7 +155,8 @@ Al momento de publicar o suscribirse de forma bindeada, sólo entran en juego lo
 Emitido al realizar la conexión exitosamente. Contiene metadatos de la conexión asignada al cliente.
 
 ### @CONNECTION@/clid
-Escucha las conexiones y desconexiones del Id de cliente suministrado
+Escucha las conexiones y desconexiones del Id de cliente suministrado.
+
 Al suscribirse emite un evento con el número de conexiones del clid actualmente conectadas.
 
 ## SHOUT & WHISPER [CONCEPTO]
