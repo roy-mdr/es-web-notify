@@ -758,25 +758,22 @@ function handleSubscription(connection) {
 
 	// Write initial response to connection
 
-	const initOutData = formatOutEvent({
+	const initOutData = {
 		topic_requested: '@SERVER@',
 		topic_emitted:   '@SERVER@',
 		type:   'info',
 		detail: {
 			connid: connection._id
 		}
-	});
+	};
 
-	connection.response.write( initOutData ); // SEND DATA TO SUBSCRIBER
+	subscriberSend(connection, initOutData); // SEND DATA TO SUBSCRIBER
 	resetTick(connection);
 
-	console.log( `[${connection._id}](${connection.body.clid}): ${initOutData}` );
 
 
 
-
-
-	topicsMiddleware(connection);
+	topicsInfoMiddleware(connection);
 
 }
 
@@ -891,17 +888,15 @@ function emitEvent(evObj) {
 		console.log(`Topics matched! (${subscriber.bind})`, `Requested: "${subscriber.topicRequested}"`, `Emitted: "${subscriber.topicEmitted}"`)
 
 
-		const outData = formatOutEvent({
+		const outData = {
 			topic_requested: subscriber.bind !== undefined ? removeBindId(subscriber.topicRequested) : subscriber.topicRequested,
 			topic_emitted:   subscriber.bind !== undefined ? removeBindId(subscriber.topicEmitted)   : subscriber.topicEmitted,
 			type:   evObj.e.type,
 			detail: evObj.e.detail === undefined ? undefined : evObj.e.detail
-		});
+		};
 
-		subscriber.connection.response.write( outData ); // SEND DATA TO SUBSCRIBER
+		subscriberSend(subscriber.connection, outData); // SEND DATA TO SUBSCRIBER
 		resetTick(subscriber.connection);
-
-		console.log( `[${subscriber.connection._id}](${subscriber.connection.body.clid}): ${outData}` );
 
 	}
 
@@ -1136,7 +1131,7 @@ function parseSubscriberEPoints(ePointArray, uid = undefined) {
 
 
 
-function topicsMiddleware(connection) {
+function topicsInfoMiddleware(connection) {
 
 	const topicsArray = connection.body.ep;
 
@@ -1156,21 +1151,33 @@ function topicsMiddleware(connection) {
 
 			// Write response to connection
 
-			const outData = formatOutEvent({
+			const outData = {
 				topic_requested: topicsArray[i].topic,
 				topic_emitted:   topicsArray[i].topic,
 				type:   'available',
 				detail: {
 					clid_instances: clidConnected.toString()
 				}
-			});
+			};
 
-			connection.response.write( outData ); // SEND DATA TO SUBSCRIBER
+			subscriberSend(connection, outData); // SEND DATA TO SUBSCRIBER
 			resetTick(connection);
-
-			console.log( `[${connection._id}](${connection.body.clid}): ${outData}` );
 
 		}
 		
 	}
+}
+
+
+
+
+
+function subscriberSend(subConnection, dataEvent) {
+
+	const outData = formatOutEvent(dataEvent);
+
+	subConnection.response.write(outData);
+
+	console.log( `[${subConnection._id}](${subConnection.body.clid}): ${outData}` );
+
 }

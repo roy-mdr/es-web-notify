@@ -15,11 +15,12 @@ Made before I knew about MQTT and then adopting some of it 😅 so maybe just us
 - [ ] Create NPM scripts for start and test
 - [ ] Refactor basic example without PHP involved...
 ---
-- [ ] Detect immediately when a client disconnects
-- [ ] Migrate keys to external file
+- [ ] FIX noPollSubscriber_NODE it goeas crazy when lost connection (it seems it won't wait 5 seconds to reconnect and it creates a new http client to connect... so it multiplies the enxt connection?)
+- [x] Detect immediately when a client disconnects -> solved? is not really possible without the client sending a ping and the server doing a timeout (this is how websockets socket.io works)
+- [x] Migrate keys to external file -> moved to *config.js*
 - [ ] Fix all the mixed up using of "event point", "channel" and "topic"
 - [ ] Organize code
-- [ ] Add pushing quee when multiple event are ammited to the same endpoint. Messages colliding?
+- [x] Add pushing quee when multiple event are emmited to the same endpoint. Messages colliding? -> this was not fault of the server, is a problem in Svelte Controll
 - [ ] Add verify the server sending event
 - [ ] Migrate to stateless JWT auth with access and refresh token workflow
 - [ ] Add redis integration for handling stateful auth
