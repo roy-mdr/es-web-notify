@@ -32,7 +32,7 @@ class NoPollSubscriber {
 		this._subscribed   = false;
 		this._stopped      = false;
 		this._separator    = "''";
-		this._httpCall     = null;
+		this._httpCall     = undefined;
 		this._retryTimeout = setTimeout(() => {}, 0);
 		this._lastIat      = 0;
 		this._resTimeout   = setTimeout(() => {}, 0);
@@ -74,7 +74,7 @@ class NoPollSubscriber {
 
 	abort() { // Abort connection (will retry, so to fully stop: fist stop() then abort())
 		clearTimeout(this._retryTimeout);
-		if (this._httpCall) this._httpCall.destroy();
+		if (this._httpCall !== undefined) this._httpCall.destroy();
 		this._dataMem = '';
 	}
 
@@ -198,7 +198,6 @@ class NoPollSubscriber {
 
 	_logicOnChunk() {
 		const obj = this;
-
 		let payload = '';
 		const response = obj._httpCall.responseText.substring(obj._responseLen);
 		const bUpdated = obj._httpCall.responseText.length - obj._responseLen;
@@ -308,6 +307,8 @@ class NoPollSubscriber {
 
 
 	_ajaxReq(protocol) {
+
+		if (this._httpCall !== undefined) this._httpCall.destroy();
 
 		let pr;
 
@@ -424,12 +425,6 @@ class NoPollSubscriber {
 		if (this._stopped) return false;
 		const obj = this;
 
-		if (obj._httpCall) {
-			obj._httpCall = null;
-			obj._subscribe();
-			return false;
-		}
-
 
 		obj._gBindKey()
 			.then( () => {
@@ -456,6 +451,7 @@ class NoPollSubscriber {
 					// console.log('statusCode:', res.statusCode);
 					// console.log('headers:', res.headers);
 
+					obj._dataMem = '';
 					obj._httpCall.responseText = '';
 					obj._responseLen = 0;
 
