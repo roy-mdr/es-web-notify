@@ -61,6 +61,10 @@ Insight of full details of active instances of given `client_id`
 
 `/state`
 Overview of the server state (connections)
+
+`/memory`
+Overview of the server current memory consumption
+
 `/alive`
 Keeps a connection alive. By hitting this endpoint before the connection times out with the correct `connection_id` and `connection_secret` it will reset the given `connection_id` timeout. A maximum of resets can be configured in the server. It returns the `connection_id`, a new `connection_secret` and the `connection_timeout` set by the server.
 

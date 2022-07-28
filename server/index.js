@@ -583,6 +583,116 @@ function onRequest(request, response) {
 
 
 
+		case "/alive": // Reset timeout of connection (keep it alive)
+
+
+
+			if (request.method == 'OPTIONS') {
+				response.writeHead(200, {
+						'Access-Control-Allow-Origin': '*',
+						'Access-Control-Allow-Headers': 'Authorization, X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Allow-Request-Method',
+						'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
+						'Allow': 'GET, POST, OPTIONS, PUT, DELETE'
+					});
+				response.end();
+				return;
+			}
+
+			if (request.method == 'POST' /*&& request.headers['content-type'] == 'application/json'*/) {
+
+				/* HANDLE REQUEST BODY */
+
+				let body = '';
+
+				request.on('data', (chunk) => {
+					// console.log(chunk);
+					// body += chunk.toString(); // convert Buffer to string
+					body += chunk;
+					if (body.length > 1e6) request.connection.destroy(); // if > 1MB of body, kill the connection
+				});
+
+				request.on('end', () => {
+
+					let jBody = null;
+
+					// validate JSON
+					try {
+						jBody = JSON.parse(body);
+					} catch(err) {
+						response.writeHead(400, 'Invalid JSON in body', { 'Access-Control-Allow-Origin' : '*' });
+						response.end();
+						return;
+					}
+
+					// validate schema received
+					if (
+						   jBody == null
+						|| jBody.connid == undefined
+						|| jBody.secret == undefined
+						|| !Number.isInteger(jBody.connid)
+						|| jBody.connid < 0
+						|| typeof jBody.secret !== 'string'
+						) {
+						response.writeHead(400, 'Invalid object', { 'Access-Control-Allow-Origin' : '*' });
+						response.end();
+						return;
+					}
+
+					// validate if data exist in state
+					if (
+						   state.connections[jBody.connid] == undefined
+						|| state.connections[jBody.connid].secret != jBody.secret
+						) {
+						response.writeHead(400, 'Invalid data', { 'Access-Control-Allow-Origin' : '*' });
+						response.end();
+						return;
+					}
+
+
+					// Do the thing!
+
+					const connection = state.connections[jBody.connid];
+
+					if (!connection.aliveCount) connection.aliveCount = 0;
+
+					if (connection.aliveCount >= serverCfg.max_alive_count) {
+						response.writeHead(400, 'Max alive reached', { 'Access-Control-Allow-Origin' : '*' });
+						response.end();
+						return;
+					}
+
+					clearTimeout(connection.timeout);
+
+					connection.timeout = setTimeout( () => {
+								console.log(`Connection [${connection._id}](${connection.body.clid}) hard-coded timed out.`);
+								connection.request.connection.removeListener('close', connection.onClose);
+								connection.onClose();
+							}, serverCfg.connection_timeout);
+
+					connection.secret = getRandomString(5);
+					connection.aliveCount++;
+
+					console.log(`Renewing [${connection._id}](${connection.body.clid}) for the ${connection.aliveCount} time.`);
+
+
+
+					response.writeHead(200, { 'Access-Control-Allow-Origin' : '*', 'content-type' : 'application/json;charset=utf-8' });
+					response.write( JSON.stringify({connid: connection._id, secret: connection.secret, timeout: serverCfg.connection_timeout}) );
+					response.end();
+					return;
+
+				});
+
+			}
+
+			if (request.method != 'OPTIONS' && request.method != 'POST') {
+				response.writeHead(400, 'Method is not POST', { 'Access-Control-Allow-Origin' : '*' });
+				response.end();
+				return;
+			}
+
+			break;
+
 		default:
 			response.writeHead(404, { 'Access-Control-Allow-Origin' : '*' });
 			response.end();
@@ -607,6 +717,7 @@ function trackConnection(parsed_url, parsed_body = {}, request, response) {
 
 	const connection	= state.connections[connId];
 	connection._id		= connId;
+	connection.secret	= getRandomString(5);
 	connection.request	= request;
 	connection.response = response;
 	connection.query	= parsed_url.query;
@@ -689,7 +800,7 @@ function handleSubscription(connection) {
 			console.log(`Connection [${connection._id}](${connection.body.clid}) hard-coded timed out.`);
 			connection.request.connection.removeListener('close', connection.onClose);
 			connection.onClose();
-		}, 5 * 60 * 1000); // 5 minutes
+		}, serverCfg.connection_timeout);
 
 	connection.request.connection.removeListener('close', connection.onClose);
 	connection.onClose	= (err) => {
@@ -728,10 +839,10 @@ function handleSubscription(connection) {
 							}
 						}
 					}
-				} else {
-					if ( connection._id in state.connections ) {
-						delete state.connections[connection._id];
-					}
+				}
+
+				if ( connection._id in state.connections ) {
+					delete state.connections[connection._id];
 				}
 
 				state.clids[connection.body.clid]--;
@@ -771,7 +882,6 @@ function handleSubscription(connection) {
 	}
 
 
-	delete state.connections[connection._id];
 
 	console.log(connection.request.headers);
 	// console.log(connection.request.connection.server);
@@ -828,7 +938,9 @@ function handleSubscription(connection) {
 		topic_emitted:   '@SERVER@',
 		type:   'info',
 		detail: {
-			connid: connection._id
+			connid: connection._id,
+			secret: connection.secret,
+			timeout: serverCfg.connection_timeout
 		}
 	};
 
@@ -950,7 +1062,7 @@ function emitEvent(evObj) {
 
 
 
-		console.log(`Topics matched! (${subscriber.bind})`, `Requested: "${subscriber.topicRequested}"`, `Emitted: "${subscriber.topicEmitted}"`)
+		console.log(`Topics matched! (${subscriber.bind ? subscriber.bind : "NOT BINDED"})`, `Requested: "${subscriber.topicRequested}"`, `Emitted: "${subscriber.topicEmitted}"`)
 
 
 		const outData = {
@@ -1245,4 +1357,20 @@ function subscriberSend(subConnection, dataEvent) {
 
 	console.log( `[${subConnection._id}](${subConnection.body.clid}): ${outData}` );
 
+}
+
+
+
+
+
+
+
+
+function getRandomString(length) {
+	const randomChars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_';
+	let result = '';
+	for ( let i = 0; i < length; i++ ) {
+		result += randomChars.charAt(Math.floor(Math.random() * randomChars.length));
+	}
+	return result;
 }

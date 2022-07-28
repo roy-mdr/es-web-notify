@@ -2,6 +2,9 @@ const fs = require("fs");
 
 const serverConfig = {
 
+	connection_timeout: 1 * 60 * 1000, // In ms // 1 minute
+	max_alive_count: 60,
+
 	NODE_HOST:        "127.0.0.1", // localhost
 	NODE_PORT:        1010,
 	NODE_PORT_SECURE: 1011,
