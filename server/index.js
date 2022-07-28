@@ -551,6 +551,38 @@ function onRequest(request, response) {
 
 
 
+		case "/memory":
+
+			if (request.method == 'GET') {
+
+				const inMb = {};
+
+				/* --- CHECK MEMORY --- */
+				console.log("---------- MEMORY STATUS ----------")
+				const used = process.memoryUsage();
+				for (let key in used) {
+					inMb[key] = `${Math.round(used[key] / 1024 / 1024 * 100) / 100} MB`;
+					console.log(`${key} ${Math.round(used[key] / 1024 / 1024 * 100) / 100} MB`);
+				}
+				console.log("-----------------------------------")
+				/* -------------------- */
+
+				response.writeHead(200, { 'Access-Control-Allow-Origin' : '*', 'content-type' : 'application/json;charset=utf-8' });
+				response.write( JSON.stringify(inMb) );
+				response.end();
+				return;
+			}
+
+			if (request.method != 'GET') {
+				response.writeHead(400, 'Method is not GET', { 'Access-Control-Allow-Origin' : '*' });
+				response.end();
+				return;
+			}
+
+			break;
+
+
+
 		default:
 			response.writeHead(404, { 'Access-Control-Allow-Origin' : '*' });
 			response.end();
@@ -718,15 +750,6 @@ function handleSubscription(connection) {
 				}
 
 				connection = undefined;
-
-				/* --- CHECK MEMORY --- */
-				console.log("---------- MEMORY STATUS ----------")
-				const used = process.memoryUsage();
-				for (let key in used) {
-				  console.log(`${key} ${Math.round(used[key] / 1024 / 1024 * 100) / 100} MB`);
-				}
-				console.log("-----------------------------------")
-				/* -------------------- */
 
 			}
 		}
