@@ -509,6 +509,48 @@ function onRequest(request, response) {
 
 			break;
 
+
+
+		case "/state":
+
+			if (request.method == 'GET') {
+
+				// Stringify JSON with depth limit:
+				// > from: https://gist.github.com/bennettmcelwee/06f0cadd6a41847f848b4bd2a351b6bc
+				const stringify = (obj/*: any*/, depth = 1)/*: string*/ => {
+					return !obj
+						? JSON.stringify(obj/*, null, 2*/)
+						: typeof obj === 'object'
+						? JSON.stringify(
+								JSON.parse(
+									depth < 1
+										? '"???"'
+										: `{${Object.keys(obj)
+												.map((k) => `"${k}": ${stringify(obj[k], depth - 1)}`)
+												.join(', ')}}`,
+								)/*,
+								null,
+								2,*/
+							)
+						: JSON.stringify(obj/*, null, 2*/);
+				};
+
+				response.writeHead(200, { 'Access-Control-Allow-Origin' : '*', 'content-type' : 'application/json;charset=utf-8' });
+				response.write( stringify(state, 2) );
+				response.end();
+				return;
+			}
+
+			if (request.method != 'GET') {
+				response.writeHead(400, 'Method is not GET', { 'Access-Control-Allow-Origin' : '*' });
+				response.end();
+				return;
+			}
+
+			break;
+
+
+
 		default:
 			response.writeHead(404, { 'Access-Control-Allow-Origin' : '*' });
 			response.end();

@@ -59,6 +59,8 @@ Number of active instances of given `client_id`
 `/connections?clid=<client_id>&details=true`
 Insight of full details of active instances of given `client_id`
 
+`/state`
+Overview of the server state (connections)
 ## FLUJO
 
 ### CLIENTE SE SUSCRIBE
