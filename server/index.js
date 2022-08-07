@@ -1163,18 +1163,16 @@ function getUserIdFromServer(base64String, callback) {
 
 	const postData = /*JSON.stringify(*/base64String/*)*/;
 
-	const options = {
-		hostname: 'estudiosustenta.myds.me',
-		port: 443,
-		path: '/test/session/getUserId',
-		method: 'RETREIVE',
-		headers: {
-			'Content-Type': 'application/json',
-			'Content-Length': Buffer.byteLength(postData)
-		}
-	};
+	const options = serverCfg.binding_server_options;
 
-	const req = https.request(options, (res) => {
+	options.headers['Content-Length'] = Buffer.byteLength(postData);
+
+	let protocol;
+
+	if (options.port == 80)  protocol = http;
+	if (options.port == 443) protocol = https;
+
+	const req = protocol.request(options, (res) => {
 		// console.log(`STATUS: ${res.statusCode}`);
 		// console.log(`HEADERS: ${JSON.stringify(res.headers)}`);
 		res.setEncoding('utf8');

@@ -16,6 +16,29 @@ const serverConfig = {
 
 
 
+	binding_server_options: {
+		hostname: 'yourdomain.com',
+		port: 443,
+		path: '/test/session/getUserId',
+		method: 'RETREIVE',
+		headers: {
+			'Content-Type': 'application/json'
+		}
+
+
+		/*
+		,
+		ca: [fs.readFileSync('./ssl_keys/cert.pem', {encoding: 'utf-8'})],
+		rejectUnauthorized: false, // should be true?
+		requestCert: true,
+		agent: false
+
+		// add `process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0;` in code, before calling https.request()
+		*/
+	},
+
+
+
 
 
 	local_privateKey : `-----BEGIN RSA PRIVATE KEY-----
