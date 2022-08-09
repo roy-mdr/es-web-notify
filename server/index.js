@@ -936,7 +936,7 @@ function handleSubscription(connection) {
 	const initOutData = {
 		topic_requested: '@SERVER@',
 		topic_emitted:   '@SERVER@',
-		type:   'info',
+		type: 'connected',
 		detail: {
 			connid: connection._id,
 			secret: connection.secret,
