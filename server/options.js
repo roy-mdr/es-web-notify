@@ -8,6 +8,7 @@ const serverConfig = {
 	NODE_HOST:        "127.0.0.1", // localhost
 	NODE_PORT:        1010,
 	NODE_PORT_SECURE: 1011,
+	ENTRY_TOKEN:      "==PLEASE_SET_A_TOKEN==",
 
 	options_secure: {
 		key:  fs.readFileSync('./ssl_keys/privkey.pem'),

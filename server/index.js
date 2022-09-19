@@ -170,6 +170,11 @@ function onRequest(request, response) {
 			/************************************************/
 			/***** EVALUATE AUTHORIZATION TO EMIT EVENT *****/
 			/************************************************/
+			if ( url_parts.query.token === undefined || url_parts.query.token !== serverCfg.ENTRY_TOKEN ) {
+				response.writeHead(404, { 'Access-Control-Allow-Origin' : '*' });
+				response.end();
+				return;
+			}
 			
 			if (request.method == 'OPTIONS') {
 				response.writeHead(200, {
